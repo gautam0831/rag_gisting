@@ -19,8 +19,8 @@ defaults:
 
 wandb:
   log: true
-  entity: jayelm  # Change this to your wandb username.
-  project: gist
+  entity: ronakmalde  # Change this to your wandb username.
+  project: gistnew
   group: ${wandb.tag}-${training.gist.condition}-${training.gist.num_gist_tokens}tok-${basename:${model.model_name_or_path}}-${basename:${data.dataset_name}}
   name: ${wandb.group}-run-${training.seed}
 
@@ -33,7 +33,7 @@ model:
 
 training:
   predict_with_generate: true
-  generation_max_length: 128
+  generation_max_length: 512
 
   do_train: true
   do_eval: true

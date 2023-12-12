@@ -97,6 +97,11 @@ def main(args: DictConfig) -> None:
             "src/data/alpaca/alpaca.py",
             cache_dir=args.model.cache_dir,
         )
+    elif args.data.dataset_name == "wikipedia":
+        lm_datasets = load_dataset(
+            "src/data/alpaca/wikipedia.py",
+            cache_dir=args.model.cache_dir,
+        )
     else:
         raise NotImplementedError(f"Unknown dataset name {args.data.dataset_name}")
 
@@ -211,7 +216,6 @@ def main(args: DictConfig) -> None:
         if args.data.max_train_samples is not None:
             max_train_samples = min(len(train_dataset), args.data.max_train_samples)
             train_dataset = train_dataset.select(range(max_train_samples))
-
     if args.training.do_eval:
         validation_splits = [
             split for split in lm_datasets if split.startswith("validation")
@@ -238,7 +242,8 @@ def main(args: DictConfig) -> None:
         )
 
     if is_t5:
-        data_collator = alpaca.collator.DataCollatorForAlpaca(
+        if args.data.dataset_name == "wikipedia":
+            data_collator = alpaca.collator_wikipedia.DataCollatorForWikipedia(
             tokenizer,
             model=model,
             padding="longest",
@@ -256,7 +261,27 @@ def main(args: DictConfig) -> None:
             gist_token=gist_token,
             pad_token=tokenizer.pad_token_id,
             add_gist_token=args.training.gist.add_gist_token,
-        )
+            )
+        else:
+            data_collator = alpaca.collator.DataCollatorForAlpaca(
+                tokenizer,
+                model=model,
+                padding="longest",
+                # Chosen so that <1% of examples are truncated.
+                # See data/alpaca_plus/length_stats.txt for length stats.
+                max_source_length=128,
+                max_target_length=256,
+                # Human eval examples are longer.
+                max_source_length_human=384,
+                max_target_length_human=384,
+                label_pad_token_id=-100,
+                pad_to_multiple_of=8 if args.training.fp16 else None,
+                gist_condition=args.training.gist.condition,
+                num_gist_tokens=args.training.gist.num_gist_tokens,
+                gist_token=gist_token,
+                pad_token=tokenizer.pad_token_id,
+                add_gist_token=args.training.gist.add_gist_token,
+            )
     elif is_llama:
         # This data collator variant does causal language modeling with left
         # padding.

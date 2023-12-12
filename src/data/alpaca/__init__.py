@@ -1,1 +1,1 @@
-from . import alpaca, collator
+from . import alpaca, collator, collator_wikipedia
