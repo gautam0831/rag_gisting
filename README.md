@@ -1,6 +1,6 @@
 # Adaptive GISTs to Create a Cache for Retrieval Augmented Generation
 
-We extend the paper ["Learning to compress prompts with gist tokens"]([url](https://arxiv.org/abs/2304.08467))  to incorporate gisting into retrieval augmented generation tasks. 
+We extend the paper ["Learning to compress prompts with gist tokens"](https://arxiv.org/abs/2304.08467) to incorporate gisting into retrieval augmented generation tasks. 
 
 ## Problem Statement
 The issue of better utilizing the limited space of context length during RAG and increasing the spatial and temporal efficiency of knowledge base retrieval for a large language model is an open problem. Recent research investigates compressing prompts with gist tokens to encode textual instruction into a
