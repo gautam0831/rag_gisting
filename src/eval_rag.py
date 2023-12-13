@@ -3,6 +3,7 @@ import pprint
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 from transformers import AutoConfig, AutoTokenizer, LlamaTokenizer
 import torch
+import numpy as np
 from tqdm.rich import tqdm
 from evaluate import load
 from sentence_transformers import SentenceTransformer, util
@@ -13,6 +14,7 @@ from .gist_llama import GistLlamaForCausalLM
 from .gist_t5 import GistT5ForConditionalGeneration
 import fire
 
+import time
 from . import logger_class as logging
 
 logger = logging.create_logger()
@@ -179,15 +181,18 @@ def gist_compress(
         gen_kwargs["gist_offset"] = gist_activations.gist_indices
     else:
         gen_kwargs["gist_activations"] = gist_activations
+    tic = time.time()
     generated_tokens = model.generate(
         max_new_tokens=max_new_tokens,
         do_sample=False,
         **gen_kwargs,
     )
+    toc = time.time()
+    total_time = toc - tic
     output = tokenizer.decode(generated_tokens[0], skip_special_tokens=True)
     if is_llama:
         output = output[len(prepped_input) - 5 :]
-    return output
+    return output, total_time
 
 
 def main():
@@ -201,40 +206,52 @@ def main():
     tokenizer = T5Tokenizer.from_pretrained("google/flan-t5-base")
     model = T5ForConditionalGeneration.from_pretrained("google/flan-t5-base", device_map="auto", torch_dtype=torch.float16)
     # gist_model = "exp/run-gist-1tok-flan-t5-base-wikipedia/run-gist-1tok-flan-t5-base-wikipedia-run-42-lr5e-5/"
-    gist_model = "exp/run-gist-1tok-flan-t5-base-wikipedia/run-gist-1tok-flan-t5-base-wikipedia-run-42/"
+    # gist_model = "exp/run-gist-1tok-flan-t5-base-wikipedia/run-gist-1tok-flan-t5-base-wikipedia-run-42/"
+    gist_model = "exp/run-gist-2tok-flan-t5-base-alpaca-plus/run-gist-2tok-flan-t5-base-alpaca-plus-run-42/"
     
-    num_predictions = 10
+    num_predictions = 100
     predictions = []
     predictions_rag = []
     predictions_gist = []
     answers = []
-    train_dataset = train_dataset.shuffle(seed=25)
-    dataset_subset = train_dataset.select(range(num_predictions))
+
+    times_vanilla = []
+    times_rag = []
+    times_gist = []
+    val_dataset = val_dataset.shuffle(seed=22)
+    dataset_subset = val_dataset.select(range(num_predictions))
     
     for i, row in enumerate(tqdm(dataset_subset, desc="Generating predictions")):
         question = row['question']
         answer = row['answer']['normalized_value']
         answers.append(answer)
+        context_str = row['entity_pages']['wiki_context'][0][:1500]
 
         # print(f'Question: {question}, Answer: {answer}')
-        logger.info(f'Question: {question}, Answer: {answer}')
+        # logger.info(f'Question: {question}, Answer: {answer}')
 
         # vanilla predictions
-        input_ids = tokenizer(question, return_tensors="pt").input_ids.to("cuda")
-        outputs = model.generate(input_ids, max_new_tokens=100)
+        question_context = f"{question}"
+        input_ids = tokenizer(question_context, return_tensors="pt").input_ids.to("cuda")
+        tic = time.time()
+        outputs = model.generate(input_ids, max_new_tokens=10)
+        toc = time.time()
         predictions.append(tokenizer.decode(outputs[0], skip_special_tokens=True))
+        times_vanilla.append(toc-tic)
 
         # predictions rag
-        context_str = row['entity_pages']['wiki_context'][0][:1500]
-        context_str = answer
         question_context = f"Context: {context_str}\n\nQuestion: {question}"
         input_ids = tokenizer(question_context, return_tensors="pt").input_ids.to("cuda")
+        tic = time.time()
         outputs = model.generate(input_ids, max_new_tokens=10)
+        toc = time.time()
         predictions_rag.append(tokenizer.decode(outputs[0], skip_special_tokens=True))
+        times_rag.append(toc-tic)
 
         #predictions gist
-        outputs = gist_compress(model_name_or_path=gist_model, instruction=question_context, input=question, num_gist_tokens=1)
+        outputs, total_time = gist_compress(model_name_or_path=gist_model, instruction=question_context, input=question, num_gist_tokens=1)
         predictions_gist.append(outputs)
+        times_gist.append(total_time)
 
     logger.info(f"vanilla: {predictions}")
     logger.info(f"rag: {predictions_rag}")
@@ -254,12 +271,21 @@ def main():
     cosine_scores = torch.nn.functional.cosine_similarity(embeddings_predictions, embeddings_answers)
     cosine_scores_rag = torch.nn.functional.cosine_similarity(embeddings_predictions_rag, embeddings_answers)
     cosine_scores_gist = torch.nn.functional.cosine_similarity(embeddings_predictions_gist, embeddings_answers)
-    logger.info(f"Cosine scores (All): {cosine_scores}")
-    logger.info(f"Cosine scores rag (All): {cosine_scores_rag}")
-    logger.info(f"Cosine scores gist (All): {cosine_scores_gist}")
+    # logger.info(f"Cosine scores (All): {cosine_scores}")
+    # logger.info(f"Cosine scores rag (All): {cosine_scores_rag}")
+    # logger.info(f"Cosine scores gist (All): {cosine_scores_gist}")
     logger.info(f"Vanilla mean cosine score: {torch.mean(cosine_scores)}")
     logger.info(f"Rag mean cosine score: {torch.mean(cosine_scores_rag)}")
     logger.info(f"Gist mean cosine score: {torch.mean(cosine_scores_gist)}")
+    logger.info("=====================================")
+    logger.info(f"Vanilla exact match: {torch.sum(cosine_scores == 1)/len(cosine_scores)}")
+    logger.info(f"Rag exact match: {torch.sum(cosine_scores_rag == 1)/len(cosine_scores_rag)}")
+    logger.info(f"Gist exact match: {torch.sum(cosine_scores_gist == 1)/len(cosine_scores_gist)}")
+    logger.info("=====================================")
+    logger.info(f"Times vanilla: {np.mean(times_vanilla)}")
+    logger.info(f"Times rag: {np.mean(times_rag)}")
+    logger.info(f"Times gist: {np.mean(times_gist)}")
+
 
 if __name__ == "__main__":
     fire.Fire(main)
@@ -283,4 +309,3 @@ Rag mean cosine score:  tensor(0.6963, device='cuda:0')
 Gist mean cosine score:  tensor(0.4568, device='cuda:0')
 """
 # python -m src.compress --model_name_or_path exp/run-gist-2tok-flan-t5-base-alpaca-plus/run-gist-2tok-flan-t5-base-alpaca-plus-run-42/ --instruction "Name the top cities in France that should not be missed. Include the best aspects of each place as well." --input "What is my name?"
-
